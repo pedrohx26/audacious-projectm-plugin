@@ -1,0 +1,10 @@
+build/
+*.so
+*.o
+*.moc
+pkg/
+src/*.tar.*
+aur-package/
+*.tar.gz
+.cache/
+compile_commands.json
