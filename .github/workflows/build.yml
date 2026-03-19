@@ -1,0 +1,44 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build on Ubuntu
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            cmake \
+            pkgconf \
+            libgl-dev \
+            qt6-base-dev \
+            libaudcore-dev \
+            libaudqt-dev \
+            libprojectm-dev \
+            libprojectm-playlist-dev
+
+      - name: Configure
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr
+
+      - name: Build
+        run: cmake --build build --parallel "$(nproc)"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: projectm-vis.so
+          path: build/projectm-vis.so
