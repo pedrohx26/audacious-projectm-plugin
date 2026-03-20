@@ -10,7 +10,7 @@
  *   - Preset browser with search/filter
  *   - Preset variable editor – parse & edit .milk INI-style variables live
  *   - Keyboard shortcuts for navigation
- *   - Settings persistence via QSettings
+ *   - Settings persistence via Audacious plugin preferences
  */
 
 #include <libaudcore/i18n.h>
@@ -48,7 +48,6 @@
 #include <QMessageBox>
 #include <QApplication>
 #include <QStandardPaths>
-#include <QSettings>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QHeaderView>
@@ -58,6 +57,7 @@
 #include <QMenu>
 #include <QAction>
 #include <QMenuBar>
+#include <QMainWindow>
 #include <QRegularExpression>
 #include <QMap>
 #include <QFile>
@@ -74,9 +74,36 @@
 /* ─── forward declarations ─────────────────────────────────────────── */
 class ProjectMWidget;
 class ProjectMContainer;
+class PresetBrowser;
 class PresetVarEditor;
 
 static ProjectMContainer * s_container = nullptr;
+static PresetBrowser * s_browser = nullptr;
+static constexpr const char * PM_CFG_SECTION = "projectm-vis";
+
+static const char * const pm_defaults[] = {
+    "preset_path", "",
+    "fps", "60",
+    "beat_sensitivity", "100",
+    "hard_cut", "TRUE",
+    "hard_cut_duration", "20.0",
+    "soft_cut_duration", "10.0",
+    nullptr
+};
+
+static void pm_settings_changed ();
+
+static QStringList pm_texture_search_paths ()
+{
+    return {
+        QDir::homePath () + "/.local/share/projectM/textures",
+        QDir::homePath () + "/.local/share/projectM/presets/textures",
+        "/usr/share/projectM/textures",
+        "/usr/share/projectM/presets/textures",
+        "/usr/local/share/projectM/textures",
+        "/usr/local/share/projectM/presets/textures"
+    };
+}
 
 /* ─── Milkdrop preset file parser ──────────────────────────────────── */
 
@@ -322,6 +349,212 @@ void MilkdropPresetFile::set_per_pixel (const QString & code)
     for (int i = 0; i < parts.size (); i++)
         m_lines.append (QString ("per_pixel_%1=%2").arg (i + 1).arg (parts[i]));
 }
+
+
+/* ─── Preset Browser Widget ────────────────────────────────────────── */
+
+class PresetBrowser : public QMainWindow
+{
+    Q_OBJECT
+
+public:
+    explicit PresetBrowser (QWidget * parent = nullptr);
+    ~PresetBrowser ();
+
+    void set_preset_paths (const QStringList & paths);
+    void refresh_presets ();
+    void load_preset (const QString & path);
+
+signals:
+    void preset_selected (const QString & path);
+
+private slots:
+    void on_search_changed (const QString & text);
+    void on_preset_double_clicked (QListWidgetItem * item);
+    void on_featured_clicked ();
+    void on_refresh_clicked ();
+    void on_load_clicked ();
+
+private:
+    void closeEvent (QCloseEvent * event) override;
+
+    QLineEdit * m_search_edit;
+    QListWidget * m_preset_list;
+    QPushButton * m_featured_btn;
+    QPushButton * m_refresh_btn;
+    QPushButton * m_load_btn;
+    QLabel * m_count_label;
+
+    QStringList m_preset_paths;
+    QStringList m_all_presets;  // Full list
+    QMap<QString, QString> m_preset_map;  // Display name -> full path
+
+    void rebuild_preset_list ();
+    QStringList scan_presets ();
+};
+
+PresetBrowser::PresetBrowser (QWidget * parent)
+    : QMainWindow (parent)
+{
+    setWindowTitle (tr ("ProjectM Preset Browser"));
+    setWindowIcon (QIcon::fromTheme ("media-optical"));
+    resize (400, 500);
+    setAttribute (Qt::WA_DeleteOnClose, false);
+
+    auto * central = new QWidget (this);
+    auto * layout = new QVBoxLayout (central);
+    layout->setContentsMargins (5, 5, 5, 5);
+
+    /* Search box */
+    auto * search_label = new QLabel (tr ("Search:"));
+    m_search_edit = new QLineEdit ();
+    m_search_edit->setPlaceholderText (tr ("Type to filter presets..."));
+    auto * search_layout = new QHBoxLayout;
+    search_layout->addWidget (search_label);
+    search_layout->addWidget (m_search_edit);
+    layout->addLayout (search_layout);
+
+    /* Preset list */
+    m_preset_list = new QListWidget ();
+    m_preset_list->setSelectionMode (QAbstractItemView::SingleSelection);
+    layout->addWidget (m_preset_list);
+
+    /* Info bar */
+    auto * info_layout = new QHBoxLayout;
+    m_count_label = new QLabel ();
+    m_count_label->setStyleSheet ("color: #666; font-size: 10pt;");
+    info_layout->addWidget (m_count_label);
+    info_layout->addStretch ();
+    layout->addLayout (info_layout);
+
+    /* Action buttons */
+    auto * btn_layout = new QHBoxLayout ();
+    m_featured_btn = new QPushButton (tr ("📌 Featured"));
+    m_featured_btn->setToolTip (tr ("Load featured presets collection"));
+    m_refresh_btn = new QPushButton (tr ("🔄 Refresh"));
+    m_refresh_btn->setToolTip (tr ("Rescan preset directories"));
+    m_load_btn = new QPushButton (tr ("▶ Load"));
+    m_load_btn->setToolTip (tr ("Load selected preset (or double-click)"));
+    btn_layout->addWidget (m_featured_btn);
+    btn_layout->addWidget (m_refresh_btn);
+    btn_layout->addStretch ();
+    btn_layout->addWidget (m_load_btn);
+    layout->addLayout (btn_layout);
+
+    central->setLayout (layout);
+    setCentralWidget (central);
+
+    connect (m_search_edit, &QLineEdit::textChanged, this, &PresetBrowser::on_search_changed);
+    connect (m_preset_list, &QListWidget::itemDoubleClicked, this, &PresetBrowser::on_preset_double_clicked);
+    connect (m_featured_btn, &QPushButton::clicked, this, &PresetBrowser::on_featured_clicked);
+    connect (m_refresh_btn, &QPushButton::clicked, this, &PresetBrowser::on_refresh_clicked);
+    connect (m_load_btn, &QPushButton::clicked, this, &PresetBrowser::on_load_clicked);
+}
+
+PresetBrowser::~PresetBrowser ()
+{
+    s_browser = nullptr;
+}
+
+void PresetBrowser::closeEvent (QCloseEvent * event)
+{
+    /* Hide instead of close, so it persists */
+    hide ();
+    event->ignore ();
+}
+
+void PresetBrowser::set_preset_paths (const QStringList & paths)
+{
+    m_preset_paths = paths;
+    refresh_presets ();
+}
+
+void PresetBrowser::refresh_presets ()
+{
+    m_all_presets = scan_presets ();
+    rebuild_preset_list ();
+}
+
+QStringList PresetBrowser::scan_presets ()
+{
+    QStringList result;
+    m_preset_map.clear ();
+
+    for (const auto & path : m_preset_paths)
+    {
+        QDir dir (path);
+        if (! dir.exists ())
+            continue;
+
+        QStringList filters;
+        filters << "*.milk" << "*.prjm";
+        auto files = dir.entryList (filters, QDir::Files, QDir::Name);
+
+        for (const auto & file : files)
+        {
+            QString full_path = dir.filePath (file);
+            m_preset_map[file] = full_path;
+            result.append (file);
+        }
+    }
+
+    std::sort (result.begin (), result.end ());
+    return result;
+}
+
+void PresetBrowser::rebuild_preset_list ()
+{
+    QString query = m_search_edit->text ().toLower ();
+    m_preset_list->clear ();
+
+    for (const auto & preset : m_all_presets)
+    {
+        if (query.isEmpty () || preset.toLower ().contains (query))
+            m_preset_list->addItem (preset);
+    }
+
+    m_count_label->setText (tr ("Presets: %1 of %2").arg (m_preset_list->count ()).arg (m_all_presets.size ()));
+}
+
+void PresetBrowser::on_search_changed (const QString &)
+{
+    rebuild_preset_list ();
+}
+
+void PresetBrowser::on_preset_double_clicked (QListWidgetItem * item)
+{
+    QString preset_name = item->text ();
+    if (m_preset_map.contains (preset_name))
+        emit preset_selected (m_preset_map[preset_name]);
+}
+
+void PresetBrowser::on_featured_clicked ()
+{
+    QString featured_dir = QDir::homePath () + "/.local/share/projectM/presets/featured";
+    if (QDir (featured_dir).exists ())
+    {
+        m_search_edit->clear ();
+        set_preset_paths ({featured_dir});
+    }
+}
+
+void PresetBrowser::on_refresh_clicked ()
+{
+    refresh_presets ();
+}
+
+void PresetBrowser::on_load_clicked ()
+{
+    auto item = m_preset_list->currentItem ();
+    if (item)
+        on_preset_double_clicked (item);
+}
+
+void PresetBrowser::load_preset (const QString & path)
+{
+    emit preset_selected (path);
+}
+
 
 
 /* ─── Preset Variable Editor Dialog ────────────────────────────────── */
@@ -675,6 +908,7 @@ public:
     ~ProjectMContainer ();
 
     ProjectMWidget * vis_widget () const { return m_vis; }
+    void apply_runtime_settings ();
 
     /* Audacious menu actions */
     void action_next ()           { m_vis->next_preset (); }
@@ -688,11 +922,6 @@ public:
 private slots:
     void on_preset_selected (int row);
     void on_preset_changed (const QString & name);
-    void on_fps_changed (int value);
-    void on_beat_sens_changed (int value);
-    void on_hard_cut_toggled (bool checked);
-    void on_soft_cut_changed (double value);
-    void on_hard_cut_dur_changed (double value);
     void on_search_changed (const QString & text);
     void on_preset_modified (const QString & path);
 
@@ -701,12 +930,6 @@ private:
     QListWidget * m_preset_list;
     QLabel * m_current_label;
     QPushButton * m_lock_btn;
-    QSlider * m_fps_slider;
-    QLabel * m_fps_label;
-    QSlider * m_beat_slider;
-    QCheckBox * m_hard_cut_cb;
-    QDoubleSpinBox * m_soft_cut_spin;
-    QDoubleSpinBox * m_hard_cut_spin;
     QLineEdit * m_path_edit;
     QLineEdit * m_search_edit;
 
@@ -715,8 +938,6 @@ private:
 
     void update_lock_ui ();
     void refresh_preset_list ();
-    void load_settings ();
-    void save_settings ();
 };
 
 
@@ -729,6 +950,39 @@ static const char pm_about[] =
        "https://github.com/projectM-visualizer/projectm\n\n"
        "License: GPLv2+");
 
+static const PreferencesWidget pm_prefs_widgets[] = {
+    WidgetFileEntry (N_("Preset directory"),
+        WidgetString (PM_CFG_SECTION, "preset_path", pm_settings_changed),
+        {FileSelectMode::Folder}),
+    WidgetSpin (N_("Target FPS"),
+        WidgetInt (PM_CFG_SECTION, "fps", pm_settings_changed),
+        {15, 120, 1, nullptr}),
+    WidgetSpin (N_("Beat sensitivity (%)"),
+        WidgetInt (PM_CFG_SECTION, "beat_sensitivity", pm_settings_changed),
+        {0, 500, 1, "%"}),
+    WidgetCheck (N_("Enable hard cuts"),
+        WidgetBool (PM_CFG_SECTION, "hard_cut", pm_settings_changed)),
+    WidgetSpin (N_("Hard cut duration"),
+        WidgetFloat (PM_CFG_SECTION, "hard_cut_duration", pm_settings_changed),
+        {1, 120, 0.5, "s"}),
+    WidgetSpin (N_("Soft cut duration"),
+        WidgetFloat (PM_CFG_SECTION, "soft_cut_duration", pm_settings_changed),
+        {1, 120, 0.5, "s"})
+};
+
+static const PluginPreferences pm_prefs = {
+    pm_prefs_widgets,
+    nullptr,
+    pm_settings_changed,
+    nullptr
+};
+
+static void pm_settings_changed ()
+{
+    if (s_container)
+        s_container->apply_runtime_settings ();
+}
+
 /* Menu actions – registered in Audacious' Visualization menu */
 static void menu_next ()           { if (s_container) s_container->action_next (); }
 static void menu_prev ()           { if (s_container) s_container->action_prev (); }
@@ -736,6 +990,28 @@ static void menu_random ()         { if (s_container) s_container->action_random
 static void menu_lock ()           { if (s_container) s_container->action_lock (); }
 static void menu_edit_preset ()    { if (s_container) s_container->action_edit_preset (); }
 static void menu_browse ()         { if (s_container) s_container->action_browse_presets (); }
+static void menu_browser ()        {
+    if (! s_browser)
+    {
+        s_browser = new PresetBrowser ();
+        
+        /* Wire up preset loading to the visualization container */
+        if (s_container)
+            QObject::connect (s_browser, QOverload<const QString &>::of (&PresetBrowser::preset_selected),
+                             s_container->vis_widget (), &ProjectMWidget::load_preset_file);
+    }
+    
+    /* Initialize browser with local preset paths */
+    QStringList paths;
+    paths << (QDir::homePath () + "/.local/share/projectM/presets");
+    paths << "/usr/share/projectM/presets";
+    paths << "/usr/local/share/projectM/presets";
+    s_browser->set_preset_paths (paths);
+    
+    s_browser->show ();
+    s_browser->raise ();
+    s_browser->activateWindow ();
+}
 static void menu_fullscreen ()     { if (s_container) s_container->action_fullscreen (); }
 
 static const AudMenuID pm_menu = AudMenuID::Main;
@@ -747,7 +1023,7 @@ public:
         N_("ProjectM (Milkdrop)"),
         PACKAGE,
         pm_about,
-        nullptr,
+        & pm_prefs,
         PluginQtOnly
     };
 
@@ -802,6 +1078,20 @@ void ProjectMWidget::setup_projectm ()
     projectm_set_soft_cut_duration (m_pm, 10.0f);
     projectm_set_aspect_correction (m_pm, true);
 
+    std::vector<QByteArray> texture_bytes;
+    std::vector<const char *> texture_paths;
+    for (const auto & path : pm_texture_search_paths ())
+    {
+        if (! QDir (path).exists ())
+            continue;
+
+        texture_bytes.push_back (path.toUtf8 ());
+        texture_paths.push_back (texture_bytes.back ().constData ());
+    }
+
+    if (! texture_paths.empty ())
+        projectm_set_texture_search_paths (m_pm, texture_paths.data (), texture_paths.size ());
+
     m_playlist = projectm_playlist_create (m_pm);
     m_initialized = true;
 }
@@ -822,6 +1112,8 @@ void ProjectMWidget::initializeGL ()
 
     /* Auto-detect preset directories */
     QStringList search = {
+        QDir::homePath () + "/.local/share/projectM/presets/featured",
+        "/usr/share/projectM/presets/featured",
         "/usr/share/projectM/presets",
         "/usr/local/share/projectM/presets",
         "/usr/share/projectm-presets",
@@ -1062,46 +1354,6 @@ ProjectMContainer::ProjectMContainer (QWidget * parent)
     m_preset_list = new QListWidget;
     pl->addWidget (m_preset_list, 1);
 
-    /* Settings */
-    auto * sg = new QGroupBox (tr ("Settings"));
-    auto * sl = new QVBoxLayout (sg);
-
-    auto * fps_row = new QHBoxLayout;
-    fps_row->addWidget (new QLabel (tr ("FPS:")));
-    m_fps_slider = new QSlider (Qt::Horizontal);
-    m_fps_slider->setRange (15, 120);
-    m_fps_slider->setValue (60);
-    m_fps_label = new QLabel ("60");
-    fps_row->addWidget (m_fps_slider);
-    fps_row->addWidget (m_fps_label);
-    sl->addLayout (fps_row);
-
-    auto * beat_row = new QHBoxLayout;
-    beat_row->addWidget (new QLabel (tr ("Beat:")));
-    m_beat_slider = new QSlider (Qt::Horizontal);
-    m_beat_slider->setRange (0, 500);
-    m_beat_slider->setValue (100);
-    beat_row->addWidget (m_beat_slider);
-    sl->addLayout (beat_row);
-
-    auto * hc_row = new QHBoxLayout;
-    m_hard_cut_cb = new QCheckBox (tr ("Hard cuts"));
-    m_hard_cut_cb->setChecked (true);
-    m_hard_cut_spin = new QDoubleSpinBox;
-    m_hard_cut_spin->setRange (1, 120); m_hard_cut_spin->setValue (20); m_hard_cut_spin->setSuffix ("s");
-    hc_row->addWidget (m_hard_cut_cb);
-    hc_row->addWidget (m_hard_cut_spin);
-    sl->addLayout (hc_row);
-
-    auto * sc_row = new QHBoxLayout;
-    sc_row->addWidget (new QLabel (tr ("Soft cut:")));
-    m_soft_cut_spin = new QDoubleSpinBox;
-    m_soft_cut_spin->setRange (1, 120); m_soft_cut_spin->setValue (10); m_soft_cut_spin->setSuffix ("s");
-    sc_row->addWidget (m_soft_cut_spin);
-    sl->addLayout (sc_row);
-
-    pl->addWidget (sg);
-
     /* Shortcuts info */
     auto * info = new QLabel (tr (
         "<small><b>Keys:</b> N/→ Next · P/← Prev · R Random<br>"
@@ -1127,18 +1379,12 @@ ProjectMContainer::ProjectMContainer (QWidget * parent)
     connect (m_search_edit, &QLineEdit::textChanged, this, &ProjectMContainer::on_search_changed);
     connect (m_preset_list, &QListWidget::currentRowChanged, this, &ProjectMContainer::on_preset_selected);
     connect (m_vis, &ProjectMWidget::preset_changed, this, &ProjectMContainer::on_preset_changed);
-    connect (m_fps_slider, &QSlider::valueChanged, this, &ProjectMContainer::on_fps_changed);
-    connect (m_beat_slider, &QSlider::valueChanged, this, &ProjectMContainer::on_beat_sens_changed);
-    connect (m_hard_cut_cb, &QCheckBox::toggled, this, &ProjectMContainer::on_hard_cut_toggled);
-    connect (m_soft_cut_spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &ProjectMContainer::on_soft_cut_changed);
-    connect (m_hard_cut_spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &ProjectMContainer::on_hard_cut_dur_changed);
 
-    load_settings ();
+    apply_runtime_settings ();
 }
 
 ProjectMContainer::~ProjectMContainer ()
 {
-    save_settings ();
     s_container = nullptr;
 }
 
@@ -1148,9 +1394,9 @@ void ProjectMContainer::action_browse_presets ()
         m_path_edit->text ().isEmpty () ? QDir::homePath () : m_path_edit->text ());
     if (! dir.isEmpty ()) {
         m_path_edit->setText (dir);
+        aud_set_str (PM_CFG_SECTION, "preset_path", dir.toUtf8 ().constData ());
         m_vis->set_preset_path (dir);
         refresh_preset_list ();
-        save_settings ();
     }
 }
 
@@ -1199,12 +1445,6 @@ void ProjectMContainer::on_preset_changed (const QString & name)
     }
 }
 
-void ProjectMContainer::on_fps_changed (int v) { m_fps_label->setText (QString::number (v)); m_vis->set_fps (v); }
-void ProjectMContainer::on_beat_sens_changed (int v) { m_vis->set_beat_sensitivity (v / 100.0f); }
-void ProjectMContainer::on_hard_cut_toggled (bool c) { m_vis->set_hard_cut_enabled (c); m_hard_cut_spin->setEnabled (c); }
-void ProjectMContainer::on_soft_cut_changed (double v) { m_vis->set_soft_cut_duration ((float)v); }
-void ProjectMContainer::on_hard_cut_dur_changed (double v) { m_vis->set_hard_cut_duration ((float)v); }
-
 void ProjectMContainer::on_search_changed (const QString & text)
 {
     m_preset_list->clear ();
@@ -1226,31 +1466,42 @@ void ProjectMContainer::refresh_preset_list ()
     m_preset_list->addItems (m_all_preset_names);
 }
 
-void ProjectMContainer::load_settings ()
+void ProjectMContainer::apply_runtime_settings ()
 {
-    QSettings s ("audacious", "projectm-vis");
-    QString path = s.value ("preset_path").toString ();
-    m_fps_slider->setValue (s.value ("fps", 60).toInt ());
-    m_beat_slider->setValue (s.value ("beat_sensitivity", 100).toInt ());
-    m_hard_cut_cb->setChecked (s.value ("hard_cut", true).toBool ());
-    m_soft_cut_spin->setValue (s.value ("soft_cut_duration", 10.0).toDouble ());
-    m_hard_cut_spin->setValue (s.value ("hard_cut_duration", 20.0).toDouble ());
+    int fps = aud_get_int (PM_CFG_SECTION, "fps");
+    int beat = aud_get_int (PM_CFG_SECTION, "beat_sensitivity");
+    bool hard_cut = aud_get_bool (PM_CFG_SECTION, "hard_cut");
+    double hard_cut_dur = aud_get_double (PM_CFG_SECTION, "hard_cut_duration");
+    double soft_cut_dur = aud_get_double (PM_CFG_SECTION, "soft_cut_duration");
 
-    if (! path.isEmpty () && QDir (path).exists ()) {
-        m_path_edit->setText (path);
-        QTimer::singleShot (500, this, [this, path]{ m_vis->set_preset_path (path); refresh_preset_list (); });
+    if (fps < 15 || fps > 120)
+        fps = 60;
+    if (beat < 0 || beat > 500)
+        beat = 100;
+    if (hard_cut_dur < 1.0 || hard_cut_dur > 120.0)
+        hard_cut_dur = 20.0;
+    if (soft_cut_dur < 1.0 || soft_cut_dur > 120.0)
+        soft_cut_dur = 10.0;
+
+    m_vis->set_fps (fps);
+    m_vis->set_beat_sensitivity ((float) beat / 100.0f);
+    m_vis->set_hard_cut_enabled (hard_cut);
+    m_vis->set_hard_cut_duration ((float) hard_cut_dur);
+    m_vis->set_soft_cut_duration ((float) soft_cut_dur);
+
+    String preset_path = aud_get_str (PM_CFG_SECTION, "preset_path");
+    QString qpath = preset_path ? QString::fromUtf8 ((const char *) preset_path) : QString ();
+    if (! qpath.isEmpty () && QDir (qpath).exists ()) {
+        m_path_edit->setText (qpath);
+        QTimer::singleShot (200, this, [this, qpath]{
+            m_vis->set_preset_path (qpath);
+            refresh_preset_list ();
+        });
     }
-}
-
-void ProjectMContainer::save_settings ()
-{
-    QSettings s ("audacious", "projectm-vis");
-    s.setValue ("preset_path", m_path_edit->text ());
-    s.setValue ("fps", m_fps_slider->value ());
-    s.setValue ("beat_sensitivity", m_beat_slider->value ());
-    s.setValue ("hard_cut", m_hard_cut_cb->isChecked ());
-    s.setValue ("soft_cut_duration", m_soft_cut_spin->value ());
-    s.setValue ("hard_cut_duration", m_hard_cut_spin->value ());
+    else {
+        m_path_edit->clear ();
+        m_preset_list->clear ();
+    }
 }
 
 
@@ -1260,6 +1511,8 @@ void ProjectMContainer::save_settings ()
 
 bool ProjectMVis::init ()
 {
+    aud_config_set_defaults (PM_CFG_SECTION, pm_defaults);
+
     /* Register menu items under Visualization */
     aud_plugin_menu_add (pm_menu, menu_next, N_("ProjectM: Next Preset"), "go-next");
     aud_plugin_menu_add (pm_menu, menu_prev, N_("ProjectM: Previous Preset"), "go-previous");
@@ -1267,6 +1520,7 @@ bool ProjectMVis::init ()
     aud_plugin_menu_add (pm_menu, menu_lock, N_("ProjectM: Lock/Unlock Preset"), "system-lock-screen");
     aud_plugin_menu_add (pm_menu, menu_edit_preset, N_("ProjectM: Edit Preset Variables..."), "document-edit");
     aud_plugin_menu_add (pm_menu, menu_browse, N_("ProjectM: Browse Preset Directory..."), "folder-open");
+    aud_plugin_menu_add (pm_menu, menu_browser, N_("ProjectM: Preset Browser"), "media-optical");
     aud_plugin_menu_add (pm_menu, menu_fullscreen, N_("ProjectM: Toggle Fullscreen"), "view-fullscreen");
 
     return true;
@@ -1280,6 +1534,7 @@ void ProjectMVis::cleanup ()
     aud_plugin_menu_remove (pm_menu, menu_lock);
     aud_plugin_menu_remove (pm_menu, menu_edit_preset);
     aud_plugin_menu_remove (pm_menu, menu_browse);
+    aud_plugin_menu_remove (pm_menu, menu_browser);
     aud_plugin_menu_remove (pm_menu, menu_fullscreen);
 }
 
