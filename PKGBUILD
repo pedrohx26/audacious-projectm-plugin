@@ -17,7 +17,9 @@ makedepends=(
     'mesa'
 )
 optdepends=(
+    'projectm-presets-classic-git: classic/original preset pack with many Geiss and Rovastar-era presets'
     'projectm-presets-cream-of-the-crop: curated preset pack (~10K presets)'
+    'git: required for scripts/install-presets.sh helper when installing preset packs manually'
 )
 
 # For local builds from this directory:
@@ -35,4 +37,7 @@ build() {
 package() {
     cd "$startdir"
     DESTDIR="$pkgdir" cmake --install build
+
+    install -Dm755 scripts/install-presets.sh "$pkgdir/usr/share/${pkgname}/scripts/install-presets.sh"
+    install -Dm644 doc/preset-installation.md "$pkgdir/usr/share/doc/${pkgname}/preset-installation.md"
 }

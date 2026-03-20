@@ -8,6 +8,38 @@ info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
+WITH_PRESETS=0
+MEGA_PACK_PATH=""
+
+while (( $# > 0 )); do
+    case "$1" in
+        --with-presets)
+            WITH_PRESETS=1
+            ;;
+        --mega-pack)
+            shift
+            MEGA_PACK_PATH="${1:-}"
+            [[ -n "$MEGA_PACK_PATH" ]] || error "--mega-pack requires a path"
+            WITH_PRESETS=1
+            ;;
+        --help|-h)
+            cat <<'EOF'
+Usage: ./scripts/install.sh [options]
+
+Options:
+  --with-presets        Also install recommended preset packs in ~/.local/share/projectM
+  --mega-pack PATH      Integrate a manually downloaded MilkDrop Mega Pack
+  --help                Show this help text
+EOF
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1"
+            ;;
+    esac
+    shift
+done
+
 install_with_privileges() {
     if sudo -n true 2>/dev/null; then
         sudo -n "$@"
@@ -21,6 +53,9 @@ install_with_privileges() {
 # ── 1. Dependencies ─────────────────────────────────────────────────
 info "Checking dependencies..."
 DEPS=(audacious audacious-plugins libprojectm qt6-base mesa cmake pkgconf)
+if (( WITH_PRESETS )); then
+    DEPS+=(git)
+fi
 MISSING=()
 for d in "${DEPS[@]}"; do
     pacman -Qi "$d" &>/dev/null || MISSING+=("$d")
@@ -38,7 +73,7 @@ fi
 
 # ── 3. Install ───────────────────────────────────────────────────────
 info "Installing plugin..."
-install_with_privileges cmake --install build
+install_with_privileges cmake --install "$(pwd)/build"
 
 PLUGIN_DIR=$(pkg-config --variable=plugin_dir audacious)
 if [[ -f "$PLUGIN_DIR/Visualization/projectm-vis.so" ]]; then
@@ -62,8 +97,24 @@ if [[ -z "${FOUND:-}" ]]; then
     echo "  git clone https://github.com/projectM-visualizer/presets-cream-of-the-crop ~/.local/share/projectM/presets"
 fi
 
+# ── 5. Optional preset packs ──────────────────────────────────────────
+if (( WITH_PRESETS )); then
+    info "Installing recommended preset packs..."
+    if [[ -n "$MEGA_PACK_PATH" ]]; then
+        bash scripts/install-presets.sh --all --mega-pack "$MEGA_PACK_PATH"
+    else
+        bash scripts/install-presets.sh --all
+    fi
+elif [[ -z "${FOUND:-}" ]]; then
+    warn "Install recommended packs with:"
+    echo "  ./scripts/install.sh --with-presets"
+    echo "  ./scripts/install-presets.sh --all"
+fi
+
 echo ""
 info "Done! Enable the plugin in Audacious:"
 info "  Settings → Plugins → Visualization → ProjectM (Milkdrop)"
 info ""
+info "Plugin settings are available via the Settings button in the Plugins list"
 info "Menu entries appear under: View → Visualization"
+info "  ✨ Try: View → Visualization → Preset Browser (standalone window)"

@@ -24,7 +24,7 @@ TARBALL="${PKG}-${VER}.tar.gz"
 git archive --format=tar.gz --prefix="${PKG}-${VER}/" HEAD -o "$TARBALL" 2>/dev/null || {
     warn "Not a git repo or git not available, creating tarball manually..."
     mkdir -p /tmp/${PKG}-${VER}
-    cp -r src CMakeLists.txt PKGBUILD .SRCINFO README.md LICENSE doc/ /tmp/${PKG}-${VER}/ 2>/dev/null || true
+    cp -r src scripts CMakeLists.txt PKGBUILD .SRCINFO README.md LICENSE doc/ /tmp/${PKG}-${VER}/ 2>/dev/null || true
     (cd /tmp && tar czf "$(pwd)/$TARBALL" ${PKG}-${VER}/)
     rm -rf /tmp/${PKG}-${VER}
 }
@@ -54,7 +54,9 @@ makedepends=(
     'mesa'
 )
 optdepends=(
+    'projectm-presets-classic-git: classic/original preset pack with many Geiss and Rovastar-era presets'
     'projectm-presets-cream-of-the-crop: curated preset pack (~10K presets)'
+    'git: required for scripts/install-presets.sh helper when installing preset packs manually'
 )
 source=("${pkgname}-${pkgver}.tar.gz")
 sha256sums=('PLACEHOLDER')
@@ -70,6 +72,9 @@ build() {
 package() {
     cd "${pkgname}-${pkgver}"
     DESTDIR="$pkgdir" cmake --install build
+
+    install -Dm755 scripts/install-presets.sh "$pkgdir/usr/share/${pkgname}/scripts/install-presets.sh"
+    install -Dm644 doc/preset-installation.md "$pkgdir/usr/share/doc/${pkgname}/preset-installation.md"
 }
 PKGBUILD_EOF
 

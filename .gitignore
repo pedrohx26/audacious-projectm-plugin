@@ -8,3 +8,4 @@ aur-package/
 *.tar.gz
 .cache/
 compile_commands.json
+scripts/publish-aur.sh
