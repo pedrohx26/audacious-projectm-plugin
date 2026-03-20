@@ -58,12 +58,6 @@ Install the Arch dependencies with:
 sudo pacman -S --needed audacious libprojectm qt6-base mesa cmake pkgconf
 ```
 
-If you are running from a VS Code terminal, prefer:
-
-```bash
-pkexec pacman -S --needed audacious libprojectm qt6-base mesa cmake pkgconf
-```
-
 ## Quick Install
 
 ```bash
@@ -85,12 +79,6 @@ Preset packs are installed per-user under `~/.local/share/projectM/`.
 ./scripts/build.sh          # Release build
 ./scripts/build.sh Debug    # Debug build
 ```
-
-## From VS Code
-
-1. Open `audacious-projectm.code-workspace`
-2. `Ctrl+Shift+B` → select **Build**
-3. Or use Terminal → Run Task → **Install (sudo)**
 
 ## PKGBUILD (makepkg)
 
@@ -187,20 +175,6 @@ Press **E** or use the menu to open the editor for the current preset.
 - **Warp / Comp Shader tabs** – view the HLSL/GLSL shader code (read-only).
 - **Apply & Reload** – saves to a temp file and hot-reloads in projectM.
 - **Save** / **Save As** – write changes back to disk.
-
-## AUR / EXTRA Submission
-
-```bash
-# Prepare for AUR:
-./scripts/prepare-aur.sh
-
-# Prepare for [extra]:
-./scripts/prepare-aur.sh --extra
-```
-
-The script creates a tarball, generates the PKGBUILD with correct checksums,
-runs `makepkg --printsrcinfo`, validates with `namcap`, and prints step-by-step
-instructions for submission.
 
 ## Troubleshooting
 
