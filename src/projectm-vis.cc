@@ -57,7 +57,6 @@
 #include <QMenu>
 #include <QAction>
 #include <QMenuBar>
-#include <QMainWindow>
 #include <QRegularExpression>
 #include <QMap>
 #include <QFile>
@@ -74,12 +73,11 @@
 /* ─── forward declarations ─────────────────────────────────────────── */
 class ProjectMWidget;
 class ProjectMContainer;
-class PresetBrowser;
 class PresetVarEditor;
 
 static ProjectMContainer * s_container = nullptr;
-static PresetBrowser * s_browser = nullptr;
 static constexpr const char * PM_CFG_SECTION = "projectm-vis";
+static constexpr const char * PM_HOOK_SET_PRESET = "projectm-vis set-preset";
 
 static const char * const pm_defaults[] = {
     "preset_path", "",
@@ -351,211 +349,7 @@ void MilkdropPresetFile::set_per_pixel (const QString & code)
 }
 
 
-/* ─── Preset Browser Widget ────────────────────────────────────────── */
-
-class PresetBrowser : public QMainWindow
-{
-    Q_OBJECT
-
-public:
-    explicit PresetBrowser (QWidget * parent = nullptr);
-    ~PresetBrowser ();
-
-    void set_preset_paths (const QStringList & paths);
-    void refresh_presets ();
-    void load_preset (const QString & path);
-
-signals:
-    void preset_selected (const QString & path);
-
-private slots:
-    void on_search_changed (const QString & text);
-    void on_preset_double_clicked (QListWidgetItem * item);
-    void on_featured_clicked ();
-    void on_refresh_clicked ();
-    void on_load_clicked ();
-
-private:
-    void closeEvent (QCloseEvent * event) override;
-
-    QLineEdit * m_search_edit;
-    QListWidget * m_preset_list;
-    QPushButton * m_featured_btn;
-    QPushButton * m_refresh_btn;
-    QPushButton * m_load_btn;
-    QLabel * m_count_label;
-
-    QStringList m_preset_paths;
-    QStringList m_all_presets;  // Full list
-    QMap<QString, QString> m_preset_map;  // Display name -> full path
-
-    void rebuild_preset_list ();
-    QStringList scan_presets ();
-};
-
-PresetBrowser::PresetBrowser (QWidget * parent)
-    : QMainWindow (parent)
-{
-    setWindowTitle (tr ("ProjectM Preset Browser"));
-    setWindowIcon (QIcon::fromTheme ("media-optical"));
-    resize (400, 500);
-    setAttribute (Qt::WA_DeleteOnClose, false);
-
-    auto * central = new QWidget (this);
-    auto * layout = new QVBoxLayout (central);
-    layout->setContentsMargins (5, 5, 5, 5);
-
-    /* Search box */
-    auto * search_label = new QLabel (tr ("Search:"));
-    m_search_edit = new QLineEdit ();
-    m_search_edit->setPlaceholderText (tr ("Type to filter presets..."));
-    auto * search_layout = new QHBoxLayout;
-    search_layout->addWidget (search_label);
-    search_layout->addWidget (m_search_edit);
-    layout->addLayout (search_layout);
-
-    /* Preset list */
-    m_preset_list = new QListWidget ();
-    m_preset_list->setSelectionMode (QAbstractItemView::SingleSelection);
-    layout->addWidget (m_preset_list);
-
-    /* Info bar */
-    auto * info_layout = new QHBoxLayout;
-    m_count_label = new QLabel ();
-    m_count_label->setStyleSheet ("color: #666; font-size: 10pt;");
-    info_layout->addWidget (m_count_label);
-    info_layout->addStretch ();
-    layout->addLayout (info_layout);
-
-    /* Action buttons */
-    auto * btn_layout = new QHBoxLayout ();
-    m_featured_btn = new QPushButton (tr ("📌 Featured"));
-    m_featured_btn->setToolTip (tr ("Load featured presets collection"));
-    m_refresh_btn = new QPushButton (tr ("🔄 Refresh"));
-    m_refresh_btn->setToolTip (tr ("Rescan preset directories"));
-    m_load_btn = new QPushButton (tr ("▶ Load"));
-    m_load_btn->setToolTip (tr ("Load selected preset (or double-click)"));
-    btn_layout->addWidget (m_featured_btn);
-    btn_layout->addWidget (m_refresh_btn);
-    btn_layout->addStretch ();
-    btn_layout->addWidget (m_load_btn);
-    layout->addLayout (btn_layout);
-
-    central->setLayout (layout);
-    setCentralWidget (central);
-
-    connect (m_search_edit, &QLineEdit::textChanged, this, &PresetBrowser::on_search_changed);
-    connect (m_preset_list, &QListWidget::itemDoubleClicked, this, &PresetBrowser::on_preset_double_clicked);
-    connect (m_featured_btn, &QPushButton::clicked, this, &PresetBrowser::on_featured_clicked);
-    connect (m_refresh_btn, &QPushButton::clicked, this, &PresetBrowser::on_refresh_clicked);
-    connect (m_load_btn, &QPushButton::clicked, this, &PresetBrowser::on_load_clicked);
-}
-
-PresetBrowser::~PresetBrowser ()
-{
-    s_browser = nullptr;
-}
-
-void PresetBrowser::closeEvent (QCloseEvent * event)
-{
-    /* Hide instead of close, so it persists */
-    hide ();
-    event->ignore ();
-}
-
-void PresetBrowser::set_preset_paths (const QStringList & paths)
-{
-    m_preset_paths = paths;
-    refresh_presets ();
-}
-
-void PresetBrowser::refresh_presets ()
-{
-    m_all_presets = scan_presets ();
-    rebuild_preset_list ();
-}
-
-QStringList PresetBrowser::scan_presets ()
-{
-    QStringList result;
-    m_preset_map.clear ();
-
-    for (const auto & path : m_preset_paths)
-    {
-        QDir dir (path);
-        if (! dir.exists ())
-            continue;
-
-        QStringList filters;
-        filters << "*.milk" << "*.prjm";
-        auto files = dir.entryList (filters, QDir::Files, QDir::Name);
-
-        for (const auto & file : files)
-        {
-            QString full_path = dir.filePath (file);
-            m_preset_map[file] = full_path;
-            result.append (file);
-        }
-    }
-
-    std::sort (result.begin (), result.end ());
-    return result;
-}
-
-void PresetBrowser::rebuild_preset_list ()
-{
-    QString query = m_search_edit->text ().toLower ();
-    m_preset_list->clear ();
-
-    for (const auto & preset : m_all_presets)
-    {
-        if (query.isEmpty () || preset.toLower ().contains (query))
-            m_preset_list->addItem (preset);
-    }
-
-    m_count_label->setText (tr ("Presets: %1 of %2").arg (m_preset_list->count ()).arg (m_all_presets.size ()));
-}
-
-void PresetBrowser::on_search_changed (const QString &)
-{
-    rebuild_preset_list ();
-}
-
-void PresetBrowser::on_preset_double_clicked (QListWidgetItem * item)
-{
-    QString preset_name = item->text ();
-    if (m_preset_map.contains (preset_name))
-        emit preset_selected (m_preset_map[preset_name]);
-}
-
-void PresetBrowser::on_featured_clicked ()
-{
-    QString featured_dir = QDir::homePath () + "/.local/share/projectM/presets/featured";
-    if (QDir (featured_dir).exists ())
-    {
-        m_search_edit->clear ();
-        set_preset_paths ({featured_dir});
-    }
-}
-
-void PresetBrowser::on_refresh_clicked ()
-{
-    refresh_presets ();
-}
-
-void PresetBrowser::on_load_clicked ()
-{
-    auto item = m_preset_list->currentItem ();
-    if (item)
-        on_preset_double_clicked (item);
-}
-
-void PresetBrowser::load_preset (const QString & path)
-{
-    emit preset_selected (path);
-}
-
-
+/* (Preset Browser is now a separate GeneralPlugin: projectm-browser.so) */
 
 /* ─── Preset Variable Editor Dialog ────────────────────────────────── */
 
@@ -876,6 +670,7 @@ public:
 
 signals:
     void preset_changed (const QString & name);
+    void preset_path_changed (const QString & path);  /* emitted after path is applied to playlist */
 
 protected:
     void initializeGL () override;
@@ -984,35 +779,21 @@ static void pm_settings_changed ()
 }
 
 /* Menu actions – registered in Audacious' Visualization menu */
-static void menu_next ()           { if (s_container) s_container->action_next (); }
-static void menu_prev ()           { if (s_container) s_container->action_prev (); }
-static void menu_random ()         { if (s_container) s_container->action_random (); }
-static void menu_lock ()           { if (s_container) s_container->action_lock (); }
-static void menu_edit_preset ()    { if (s_container) s_container->action_edit_preset (); }
-static void menu_browse ()         { if (s_container) s_container->action_browse_presets (); }
-static void menu_browser ()        {
-    if (! s_browser)
-    {
-        s_browser = new PresetBrowser ();
-        
-        /* Wire up preset loading to the visualization container */
-        if (s_container)
-            QObject::connect (s_browser, QOverload<const QString &>::of (&PresetBrowser::preset_selected),
-                             s_container->vis_widget (), &ProjectMWidget::load_preset_file);
-    }
-    
-    /* Initialize browser with local preset paths */
-    QStringList paths;
-    paths << (QDir::homePath () + "/.local/share/projectM/presets");
-    paths << "/usr/share/projectM/presets";
-    paths << "/usr/local/share/projectM/presets";
-    s_browser->set_preset_paths (paths);
-    
-    s_browser->show ();
-    s_browser->raise ();
-    s_browser->activateWindow ();
+static void menu_next ()        { if (s_container) s_container->action_next (); }
+static void menu_prev ()        { if (s_container) s_container->action_prev (); }
+static void menu_random ()      { if (s_container) s_container->action_random (); }
+static void menu_lock ()        { if (s_container) s_container->action_lock (); }
+static void menu_edit_preset () { if (s_container) s_container->action_edit_preset (); }
+static void menu_browse ()      { if (s_container) s_container->action_browse_presets (); }
+static void menu_fullscreen ()  { if (s_container) s_container->action_fullscreen (); }
+
+/* Hook receiver: the preset browser plugin fires this to load a preset */
+static void on_browser_set_preset (void * data, void *)
+{
+    if (s_container && data)
+        s_container->vis_widget ()->load_preset_file (
+            QString::fromUtf8 (static_cast<const char *> (data)));
 }
-static void menu_fullscreen ()     { if (s_container) s_container->action_fullscreen (); }
 
 static const AudMenuID pm_menu = AudMenuID::Main;
 
@@ -1110,18 +891,34 @@ void ProjectMWidget::initializeGL ()
     setup_projectm ();
     m_timer->start (1000 / m_target_fps);
 
-    /* Auto-detect preset directories */
-    QStringList search = {
-        QDir::homePath () + "/.local/share/projectM/presets/featured",
-        "/usr/share/projectM/presets/featured",
-        "/usr/share/projectM/presets",
-        "/usr/local/share/projectM/presets",
-        "/usr/share/projectm-presets",
-        QDir::homePath () + "/.projectM/presets",
-        QDir::homePath () + "/.local/share/projectM/presets"
-    };
-    for (const auto & p : search)
-        if (QDir (p).exists ()) { set_preset_path (p); break; }
+    /* Use the stored path (set before GL was ready) if valid,
+     * otherwise auto-detect and save to config so it persists. */
+    if (! m_preset_path.isEmpty () && QDir (m_preset_path).exists ())
+    {
+        set_preset_path (m_preset_path);  /* applies now that GL is ready */
+    }
+    else
+    {
+        const QStringList search = {
+            QDir::homePath () + "/.local/share/projectM/presets/featured",
+            "/usr/share/projectM/presets/featured",
+            "/usr/share/projectM/presets",
+            "/usr/local/share/projectM/presets",
+            "/usr/share/projectm-presets",
+            QDir::homePath () + "/.projectM/presets",
+            QDir::homePath () + "/.local/share/projectM/presets"
+        };
+        for (const auto & p : search)
+        {
+            if (QDir (p).exists ())
+            {
+                /* Save auto-detected path so it survives restarts */
+                aud_set_str (PM_CFG_SECTION, "preset_path", p.toUtf8 ().constData ());
+                set_preset_path (p);
+                break;
+            }
+        }
+    }
 }
 
 void ProjectMWidget::resizeGL (int w, int h)
@@ -1131,7 +928,13 @@ void ProjectMWidget::resizeGL (int w, int h)
 
 void ProjectMWidget::paintGL ()
 {
-    if (! m_pm || ! m_initialized) { glClear (GL_COLOR_BUFFER_BIT); return; }
+    /* Don't render until a preset is actually loaded – avoids RGB garbage frames */
+    if (! m_pm || ! m_initialized || ! m_playlist ||
+        projectm_playlist_size (m_playlist) == 0)
+    {
+        glClear (GL_COLOR_BUFFER_BIT);
+        return;
+    }
     projectm_opengl_render_frame (m_pm);
 }
 
@@ -1164,8 +967,8 @@ void ProjectMWidget::clear_vis () { /* projectM handles silence fine */ }
 
 void ProjectMWidget::set_preset_path (const QString & path)
 {
+    m_preset_path = path;   /* always store – applied in initializeGL if called before GL is ready */
     if (! m_playlist || ! m_pm) return;
-    m_preset_path = path;
     projectm_playlist_clear (m_playlist);
     QByteArray pb = path.toUtf8 ();
     projectm_playlist_add_path (m_playlist, pb.constData (), true, false);
@@ -1175,6 +978,7 @@ void ProjectMWidget::set_preset_path (const QString & path)
     projectm_playlist_set_shuffle (m_playlist, true);
     if (projectm_playlist_size (m_playlist) > 0)
         projectm_playlist_play_next (m_playlist, true);
+    emit preset_path_changed (path);
 }
 
 void ProjectMWidget::load_preset_file (const QString & file)
@@ -1378,7 +1182,11 @@ ProjectMContainer::ProjectMContainer (QWidget * parent)
     connect (edit_btn,  &QPushButton::clicked, this, &ProjectMContainer::action_edit_preset);
     connect (m_search_edit, &QLineEdit::textChanged, this, &ProjectMContainer::on_search_changed);
     connect (m_preset_list, &QListWidget::currentRowChanged, this, &ProjectMContainer::on_preset_selected);
-    connect (m_vis, &ProjectMWidget::preset_changed, this, &ProjectMContainer::on_preset_changed);
+    connect (m_vis, &ProjectMWidget::preset_changed,      this, &ProjectMContainer::on_preset_changed);
+    connect (m_vis, &ProjectMWidget::preset_path_changed, this, [this](const QString & path) {
+        m_path_edit->setText (path);
+        refresh_preset_list ();
+    });
 
     apply_runtime_settings ();
 }
@@ -1491,16 +1299,26 @@ void ProjectMContainer::apply_runtime_settings ()
 
     String preset_path = aud_get_str (PM_CFG_SECTION, "preset_path");
     QString qpath = preset_path ? QString::fromUtf8 ((const char *) preset_path) : QString ();
-    if (! qpath.isEmpty () && QDir (qpath).exists ()) {
+
+    if (! qpath.isEmpty () && QDir (qpath).exists ())
+    {
+        /* Show the path immediately; set_preset_path() stores it and applies
+         * when GL is ready (or immediately if GL is already initialised). */
         m_path_edit->setText (qpath);
-        QTimer::singleShot (200, this, [this, qpath]{
-            m_vis->set_preset_path (qpath);
-            refresh_preset_list ();
-        });
+        m_vis->set_preset_path (qpath);
     }
-    else {
+    else if (qpath.isEmpty ())
+    {
+        /* No saved path – initializeGL() will auto-detect and emit preset_path_changed */
         m_path_edit->clear ();
         m_preset_list->clear ();
+    }
+    else
+    {
+        /* Saved path no longer exists */
+        m_path_edit->clear ();
+        m_preset_list->clear ();
+        aud_set_str (PM_CFG_SECTION, "preset_path", "");
     }
 }
 
@@ -1513,28 +1331,31 @@ bool ProjectMVis::init ()
 {
     aud_config_set_defaults (PM_CFG_SECTION, pm_defaults);
 
+    /* Listen for preset selections from the browser plugin */
+    hook_associate (PM_HOOK_SET_PRESET, on_browser_set_preset, nullptr);
+
     /* Register menu items under Visualization */
-    aud_plugin_menu_add (pm_menu, menu_next, N_("ProjectM: Next Preset"), "go-next");
-    aud_plugin_menu_add (pm_menu, menu_prev, N_("ProjectM: Previous Preset"), "go-previous");
-    aud_plugin_menu_add (pm_menu, menu_random, N_("ProjectM: Random Preset"), "media-playlist-shuffle");
-    aud_plugin_menu_add (pm_menu, menu_lock, N_("ProjectM: Lock/Unlock Preset"), "system-lock-screen");
+    aud_plugin_menu_add (pm_menu, menu_next,        N_("ProjectM: Next Preset"),           "go-next");
+    aud_plugin_menu_add (pm_menu, menu_prev,        N_("ProjectM: Previous Preset"),       "go-previous");
+    aud_plugin_menu_add (pm_menu, menu_random,      N_("ProjectM: Random Preset"),         "media-playlist-shuffle");
+    aud_plugin_menu_add (pm_menu, menu_lock,        N_("ProjectM: Lock/Unlock Preset"),    "system-lock-screen");
     aud_plugin_menu_add (pm_menu, menu_edit_preset, N_("ProjectM: Edit Preset Variables..."), "document-edit");
-    aud_plugin_menu_add (pm_menu, menu_browse, N_("ProjectM: Browse Preset Directory..."), "folder-open");
-    aud_plugin_menu_add (pm_menu, menu_browser, N_("ProjectM: Preset Browser"), "media-optical");
-    aud_plugin_menu_add (pm_menu, menu_fullscreen, N_("ProjectM: Toggle Fullscreen"), "view-fullscreen");
+    aud_plugin_menu_add (pm_menu, menu_browse,      N_("ProjectM: Browse Preset Directory..."), "folder-open");
+    aud_plugin_menu_add (pm_menu, menu_fullscreen,  N_("ProjectM: Toggle Fullscreen"),     "view-fullscreen");
 
     return true;
 }
 
 void ProjectMVis::cleanup ()
 {
+    hook_dissociate (PM_HOOK_SET_PRESET, on_browser_set_preset, nullptr);
+
     aud_plugin_menu_remove (pm_menu, menu_next);
     aud_plugin_menu_remove (pm_menu, menu_prev);
     aud_plugin_menu_remove (pm_menu, menu_random);
     aud_plugin_menu_remove (pm_menu, menu_lock);
     aud_plugin_menu_remove (pm_menu, menu_edit_preset);
     aud_plugin_menu_remove (pm_menu, menu_browse);
-    aud_plugin_menu_remove (pm_menu, menu_browser);
     aud_plugin_menu_remove (pm_menu, menu_fullscreen);
 }
 
