@@ -27,10 +27,6 @@ audacious-plugin-projectm/
 ├── .gitignore
 ├── .clang-format
 ├── .editorconfig
-├── audacious-projectm.code-workspace   # VS Code workspace
-├── .vscode/
-│   ├── c_cpp_properties.json      # IntelliSense config
-│   └── tasks.json                 # Build / install tasks
 ├── src/
 │   └── projectm-vis.cc           # Plugin source (single file)
 ├── scripts/
@@ -175,6 +171,20 @@ Press **E** or use the menu to open the editor for the current preset.
 - **Warp / Comp Shader tabs** – view the HLSL/GLSL shader code (read-only).
 - **Apply & Reload** – saves to a temp file and hot-reloads in projectM.
 - **Save** / **Save As** – write changes back to disk.
+
+## AUR / EXTRA Submission
+
+```bash
+# Prepare for AUR:
+./scripts/prepare-aur.sh
+
+# Prepare for [extra]:
+./scripts/prepare-aur.sh --extra
+```
+
+The script creates a tarball, generates the PKGBUILD with correct checksums,
+runs `makepkg --printsrcinfo`, validates with `namcap`, and prints step-by-step
+instructions for submission.
 
 ## Troubleshooting
 
