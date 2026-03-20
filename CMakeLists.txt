@@ -85,5 +85,25 @@ endif()
 
 set_target_properties(projectm-vis PROPERTIES PREFIX "")
 
+# ── Preset Browser General Plugin ─────────────────────────────────
+execute_process(
+    COMMAND pkg-config --variable=plugin_dir audacious
+    OUTPUT_VARIABLE AUDACIOUS_PLUGIN_DIR2
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+set(GENERAL_PLUGIN_DIR "${AUDACIOUS_PLUGIN_DIR2}/General")
+
+add_library(projectm-browser SHARED src/projectm-browser.cc)
+
+target_compile_definitions(projectm-browser PRIVATE
+    HAVE_GETTEXT
+    PACKAGE="audacious-projectm")
+
+target_link_libraries(projectm-browser PRIVATE
+    ${QT_LIBRARIES}
+    PkgConfig::AUDACIOUS)
+
+set_target_properties(projectm-browser PROPERTIES PREFIX "")
+
 # ── Install ────────────────────────────────────────────────────────
-install(TARGETS projectm-vis LIBRARY DESTINATION "${VIS_PLUGIN_DIR}")
+install(TARGETS projectm-vis    LIBRARY DESTINATION "${VIS_PLUGIN_DIR}")
+install(TARGETS projectm-browser LIBRARY DESTINATION "${GENERAL_PLUGIN_DIR}")

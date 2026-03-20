@@ -9,3 +9,7 @@ aur-package/
 .cache/
 compile_commands.json
 scripts/publish-aur.sh
+.vscode/
+.github/
+
+audacious-projectm.code-workspace
