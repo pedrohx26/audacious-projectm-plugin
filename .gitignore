@@ -13,3 +13,20 @@ scripts/publish-aur.sh
 .github/
 
 audacious-projectm.code-workspace
+# CocoIndex Code (ccc)
+/.cocoindex_code/
+
+# tool caches / generated artifacts
+graphify-out/
+
+# editor / agent / local-tool state
+.githooks
+.github
+.omc
+.omg
+.omx
+.vscode
+mcp-server/
+.gsd
+.claude
+.bg-shell
